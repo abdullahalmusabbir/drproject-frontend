@@ -1,69 +1,325 @@
-import Image from "next/image";
+"use client";
+
+import { useState, useMemo, useEffect, useRef } from "react";
+import { predictDR, fetchPredictions } from "@/lib/api";
+import { useData } from "@/context/DataContext";
+import { PredictionResult } from "@/types";
+
+const ITEMS_PER_PAGE = 20;
 
 export default function Home() {
+  const { predictions, addPrediction } = useData();
+
+  const [file, setFile] = useState<File | null>(null);
+  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [latestResult, setLatestResult] = useState<PredictionResult | null>(null);
+
+  const [showHistory, setShowHistory] = useState(false);
+  const [dateFilter, setDateFilter] = useState("");
+  const [indexFilter, setIndexFilter] = useState("");
+  const [page, setPage] = useState(1);
+  const [initialLoaded, setInitialLoaded] = useState(false);
+  const loadedRef = useRef(false);   // <-- নতুন: ডুপ্লিকেট লোড রোধ করবে
+
+  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const selected = e.target.files?.[0] || null;
+    setFile(selected);
+    setError(null);
+    if (selected) {
+      setPreviewUrl(URL.createObjectURL(selected));
+    } else {
+      setPreviewUrl(null);
+    }
+  };
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!file) {
+      setError("Please select an image first.");
+      return;
+    }
+    setLoading(true);
+    setError(null);
+    try {
+      const result = await predictDR(file);
+      addPrediction(result);
+      setLatestResult(result);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Something went wrong.");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // ব্যাকএন্ড থেকে আগের রেজাল্ট আনুন — শুধু একবার
+  useEffect(() => {
+    if (loadedRef.current) return;   // ← একবার লোড হলে আর চলে না
+    loadedRef.current = true;
+
+    const loadPrevious = async () => {
+      try {
+        const results = await fetchPredictions();
+        results.forEach((r) => addPrediction(r));
+      } catch (err) {
+        console.error("Failed to load previous predictions:", err);
+      } finally {
+        setInitialLoaded(true);
+      }
+    };
+    loadPrevious();
+  }, []);
+
+  const filteredPredictions = useMemo(() => {
+    return predictions.filter((p) => {
+      const matchesDate = dateFilter
+        ? p.created_at.slice(0, 10) === dateFilter
+        : true;
+      const matchesIndex = indexFilter
+        ? p.index.toString() === indexFilter.trim()
+        : true;
+      return matchesDate && matchesIndex;
+    });
+  }, [predictions, dateFilter, indexFilter]);
+
+  const totalPages = Math.max(
+    1,
+    Math.ceil(filteredPredictions.length / ITEMS_PER_PAGE)
+  );
+
+  const paginatedPredictions = filteredPredictions.slice(
+    (page - 1) * ITEMS_PER_PAGE,
+    page * ITEMS_PER_PAGE
+  );
+
+  const resetFiltersAndPage = () => {
+    setPage(1);
+  };
+
+  if (!initialLoaded) {
+    return (
+      <div className="flex h-screen items-center justify-center">
+        <p className="text-textmain">Loading previous results...</p>
+      </div>
+    );
+  }
+
   return (
-    <div className="flex flex-col flex-1 items-center justify-center bg-zinc-50 font-sans dark:bg-black">
-      <main className="flex flex-1 w-full max-w-3xl flex-col items-center justify-between py-32 px-16 bg-white dark:bg-black sm:items-start">
-        <Image
-          className="dark:invert h-5 w-[100px]"
-          src="/next.svg"
-          alt="Next.js logo"
-          width={100}
-          height={20}
-          priority
-        />
-        <div className="flex flex-col items-center gap-6 text-center sm:items-start sm:text-left">
-          <h1 className="max-w-xs text-3xl font-semibold leading-10 tracking-tight text-black dark:text-zinc-50">
-            To get started, edit the{" "}
-            <code className="rounded bg-black/[.06] px-1.5 py-0.5 font-mono text-[0.9em] dark:bg-white/[.08]">
-              page.tsx
-            </code>{" "}
-            file.
-          </h1>
-          <p className="max-w-md text-lg leading-8 text-zinc-600 dark:text-zinc-400">
-            Looking for a starting point or more instructions? Head over to{" "}
-            <a
-              href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Templates
-            </a>{" "}
-            or the{" "}
-            <a
-              href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Learning
-            </a>{" "}
-            center.
-          </p>
+    <div className="relative">
+      <div className="scene">
+        <div className="blob blob-1" />
+        <div className="blob blob-2" />
+        <div className="blob blob-3" />
+      </div>
+
+      <section className="mx-auto flex max-w-4xl flex-col items-center px-6 pt-20 text-center">
+        <h1 className="text-4xl font-bold text-textmain sm:text-5xl">
+          Diabetic Retinopathy Screening
+        </h1>
+        <p className="mt-4 max-w-2xl text-textsecondary">
+          Upload a retinal fundus image and get an instant referable /
+          non-referable screening result powered by a lightweight on-device
+          model.
+        </p>
+      </section>
+
+      <section className="mx-auto mt-14 max-w-xl px-6">
+        <div className="tilt-card">
+          <div className="tilt-card-inner rounded-2xl border border-border bg-surface p-8 shadow-sm">
+            <form onSubmit={handleSubmit} className="flex flex-col gap-5">
+              <label className="text-sm font-medium text-textmain">
+                Retinal Image
+              </label>
+              <input
+                type="file"
+                accept="image/*"
+                onChange={handleFileChange}
+                className="rounded-lg border border-border bg-inputbg px-4 py-3 text-sm text-textmain file:mr-4 file:rounded-md file:border-0 file:bg-primary file:px-4 file:py-2 file:text-white hover:file:bg-primaryhover"
+              />
+
+              {previewUrl && (
+                <img
+                  src={previewUrl}
+                  alt="preview"
+                  className="h-48 w-full rounded-lg object-cover border border-border"
+                />
+              )}
+
+              <button
+                type="submit"
+                disabled={loading}
+                className="rounded-lg bg-primary px-6 py-3 font-medium text-white transition hover:bg-primaryhover disabled:opacity-60"
+              >
+                {loading ? "Analyzing..." : "Run Detection"}
+              </button>
+
+              {error && <p className="text-sm text-red-500">{error}</p>}
+            </form>
+
+            {latestResult && (
+              <div className="mt-6 rounded-xl border border-border bg-secondarybg p-5">
+                <p className="text-sm text-textsecondary">Latest Result</p>
+                <p className="mt-1 text-xl font-semibold text-textmain">
+                  {latestResult.predicted_label}
+                </p>
+                <div className="mt-3 grid grid-cols-2 gap-3 text-sm text-textsecondary">
+                  <p>
+                    Probability:{" "}
+                    <span className="text-textmain">
+                      {latestResult.probability_referable.toFixed(4)}
+                    </span>
+                  </p>
+                  <p>
+                    Entropy:{" "}
+                    <span className="text-textmain">
+                      {latestResult.entropy.toFixed(4)}
+                    </span>
+                  </p>
+                  <p>
+                    High Uncertainty:{" "}
+                    <span className="text-textmain">
+                      {latestResult.is_high_uncertainty ? "Yes" : "No"}
+                    </span>
+                  </p>
+                </div>
+              </div>
+            )}
+          </div>
         </div>
-        <div className="flex flex-col gap-4 text-base font-medium sm:flex-row">
-          <a
-            className="flex h-12 w-full items-center justify-center gap-2 rounded-full bg-foreground px-5 text-background transition-colors hover:bg-[#383838] dark:hover:bg-[#ccc] md:w-[158px]"
-            href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
+      </section>
+
+      <section className="mx-auto mt-16 mb-24 max-w-5xl px-6">
+        <div className="flex items-center justify-between">
+          <h2 className="text-xl font-semibold text-textmain">
+            Previous Test Results
+          </h2>
+          <button
+            onClick={() => setShowHistory((prev) => !prev)}
+            className="rounded-lg border border-primary px-5 py-2 text-sm font-medium text-primary transition hover:bg-primary hover:text-white"
           >
-            <Image
-              className="dark:invert h-[14px] w-4"
-              src="/vercel.svg"
-              alt="Vercel logomark"
-              width={16}
-              height={14}
-            />
-            Deploy Now
-          </a>
-          <a
-            className="flex h-12 w-full items-center justify-center rounded-full border border-solid border-black/[.08] px-5 transition-colors hover:border-transparent hover:bg-black/[.04] dark:border-white/[.145] dark:hover:bg-[#1a1a1a] md:w-[158px]"
-            href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Documentation
-          </a>
+            {showHistory ? "Hide Results" : "Show Results"}
+          </button>
         </div>
-      </main>
+
+        {showHistory && (
+          <div className="mt-6">
+            <div className="flex flex-wrap gap-4">
+              <div className="flex flex-col gap-1">
+                <label className="text-xs text-textsecondary">
+                  Filter by Date
+                </label>
+                <input
+                  type="date"
+                  value={dateFilter}
+                  onChange={(e) => {
+                    setDateFilter(e.target.value);
+                    resetFiltersAndPage();
+                  }}
+                  className="rounded-lg border border-border bg-inputbg px-3 py-2 text-sm text-textmain"
+                />
+              </div>
+
+              <div className="flex flex-col gap-1">
+                <label className="text-xs text-textsecondary">
+                  Filter by Index
+                </label>
+                <input
+                  type="number"
+                  placeholder="e.g. 5"
+                  value={indexFilter}
+                  onChange={(e) => {
+                    setIndexFilter(e.target.value);
+                    resetFiltersAndPage();
+                  }}
+                  className="rounded-lg border border-border bg-inputbg px-3 py-2 text-sm text-textmain"
+                />
+              </div>
+
+              {(dateFilter || indexFilter) && (
+                <button
+                  onClick={() => {
+                    setDateFilter("");
+                    setIndexFilter("");
+                    resetFiltersAndPage();
+                  }}
+                  className="self-end rounded-lg border border-border px-4 py-2 text-sm text-textsecondary hover:border-primary hover:text-primary"
+                >
+                  Clear Filters
+                </button>
+              )}
+            </div>
+
+            <div className="mt-6 overflow-x-auto rounded-xl border border-border">
+              <table className="w-full text-left text-sm">
+                <thead className="bg-secondarybg text-textsecondary">
+                  <tr>
+                    <th className="px-4 py-3">Index</th>
+                    <th className="px-4 py-3">Date</th>
+                    <th className="px-4 py-3">Result</th>
+                    <th className="px-4 py-3">Probability</th>
+                    <th className="px-4 py-3">Entropy</th>
+                    <th className="px-4 py-3">High Uncertainty</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {paginatedPredictions.length === 0 && (
+                    <tr>
+                      <td
+                        colSpan={6}
+                        className="px-4 py-6 text-center text-textsecondary"
+                      >
+                        No results found.
+                      </td>
+                    </tr>
+                  )}
+                  {paginatedPredictions.map((p) => (
+                    <tr
+                      key={p.id}
+                      className="border-t border-border text-textmain"
+                    >
+                      <td className="px-4 py-3">{p.index}</td>
+                      <td className="px-4 py-3">
+                        {new Date(p.created_at).toLocaleString()}
+                      </td>
+                      <td className="px-4 py-3">{p.predicted_label}</td>
+                      <td className="px-4 py-3">
+                        {p.probability_referable.toFixed(4)}
+                      </td>
+                      <td className="px-4 py-3">{p.entropy.toFixed(4)}</td>
+                      <td className="px-4 py-3">
+                        {p.is_high_uncertainty ? "Yes" : "No"}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+
+            {totalPages > 1 && (
+              <div className="mt-5 flex items-center justify-center gap-3">
+                <button
+                  onClick={() => setPage((p) => Math.max(1, p - 1))}
+                  disabled={page === 1}
+                  className="rounded-lg border border-border px-4 py-2 text-sm text-textmain disabled:opacity-40"
+                >
+                  Prev
+                </button>
+                <span className="text-sm text-textsecondary">
+                  Page {page} of {totalPages}
+                </span>
+                <button
+                  onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+                  disabled={page === totalPages}
+                  className="rounded-lg border border-border px-4 py-2 text-sm text-textmain disabled:opacity-40"
+                >
+                  Next
+                </button>
+              </div>
+            )}
+          </div>
+        )}
+      </section>
     </div>
   );
 }
