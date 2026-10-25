@@ -21,16 +21,94 @@ export default function Home() {
   const [indexFilter, setIndexFilter] = useState("");
   const [page, setPage] = useState(1);
   const [initialLoaded, setInitialLoaded] = useState(false);
-  const loadedRef = useRef(false);   // <-- নতুন: ডুপ্লিকেট লোড রোধ করবে
+  const loadedRef = useRef(false);
 
-  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+  // ক্লায়েন্ট-সাইড ফান্ডাস চেক — রেটিনা ইমেজ নয় 한다면 "Analyze" ক্লিক করার আগেই এরর দেখাবে
+  function isLikelyFundus(file: File): Promise<{ ok: boolean; reason: string }> {
+    return new Promise((resolve) => {
+      if (!file.type.startsWith("image/")) {
+        resolve({ ok: false, reason: "Please select a valid image file." });
+        return;
+      }
+
+      const url = URL.createObjectURL(file);
+      const img = new Image();
+      img.onload = () => {
+        URL.revokeObjectURL(url);
+        const { width, height } = img;
+        const aspect = width / height;
+
+        if (width < 224 || height < 224) {
+          resolve({ ok: false, reason: "Image resolution is too low for a fundus image." });
+          return;
+        }
+        if (aspect < 0.5 || aspect > 2.0) {
+          resolve({ ok: false, reason: "Image aspect ratio does not look like a retinal fundus image." });
+          return;
+        }
+
+        const canvas = document.createElement("canvas");
+        const ctx = canvas.getContext("2d");
+        canvas.width = width;
+        canvas.height = height;
+        ctx?.drawImage(img, 0, 0);
+        const imageData = ctx?.getImageData(0, 0, width, height);
+        if (!imageData) {
+          resolve({ ok: true, reason: "" });
+          return;
+        }
+        const data = imageData.data;
+        let r = 0, g = 0, b = 0, count = 0;
+        const step = Math.max(1, Math.floor((data.length / 4) / 4000));
+        for (let i = 0; i < data.length; i += step * 4) {
+          r += data[i];
+          g += data[i + 1];
+          b += data[i + 2];
+          count += 1;
+        }
+        r /= count;
+        g /= count;
+        b /= count;
+
+        if (Math.abs(r - g) < 8 && Math.abs(g - b) < 8) {
+          resolve({ ok: false, reason: "Image appears grayscale; not a color fundus image." });
+          return;
+        }
+        if (r <= b) {
+          resolve({ ok: false, reason: "Image does not look like a retinal fundus image." });
+          return;
+        }
+
+        resolve({ ok: true, reason: "" });
+      };
+      img.onerror = () => {
+        URL.revokeObjectURL(url);
+        resolve({ ok: false, reason: "Could not read image file." });
+      };
+      img.src = url;
+    });
+  }
+
+  const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const selected = e.target.files?.[0] || null;
     setFile(selected);
     setError(null);
-    if (selected) {
-      setPreviewUrl(URL.createObjectURL(selected));
-    } else {
+
+    if (!selected) {
       setPreviewUrl(null);
+      return;
+    }
+
+    const newPreview = URL.createObjectURL(selected);
+    setPreviewUrl(newPreview);
+
+    const { ok, reason } = await isLikelyFundus(selected);
+    if (!ok) {
+      setError(reason);
+      setFile(null);
+      URL.revokeObjectURL(newPreview);
+      setPreviewUrl(null);
+      return;
     }
   };
 
@@ -55,7 +133,7 @@ export default function Home() {
 
   // ব্যাকএন্ড থেকে আগের রেজাল্ট আনুন — শুধু একবার
   useEffect(() => {
-    if (loadedRef.current) return;   // ← একবার লোড হলে আর চলে না
+    if (loadedRef.current) return;
     loadedRef.current = true;
 
     const loadPrevious = async () => {
@@ -148,7 +226,7 @@ export default function Home() {
 
               <button
                 type="submit"
-                disabled={loading}
+                disabled={loading || !file || error !== null}
                 className="rounded-lg bg-primary px-6 py-3 font-medium text-white transition hover:bg-primaryhover disabled:opacity-60"
               >
                 {loading ? "Analyzing..." : "Run Detection"}
